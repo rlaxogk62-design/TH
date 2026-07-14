@@ -1,5 +1,5 @@
 import streamlit as st
-import ccxt
+import yfinance as yf
 import pandas as pd
 import numpy as np
 import joblib
@@ -30,7 +30,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<p class="main-title">⚡ TH Chart Pro</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">Live Binance Engine (No-Cache Architecture)</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">Live YF Engine (No-Cache Architecture)</p>', unsafe_allow_html=True)
 
 # 서버 시간 계산
 now_utc = datetime.datetime.utcnow()
@@ -40,31 +40,26 @@ st.sidebar.title("⚙️ System Status")
 st.sidebar.markdown("---")
 st.sidebar.success("🟢 **Live Engine:** Active")
 st.sidebar.info("🔄 **Auto Refresh:** 60s")
-st.sidebar.markdown("**App Version:** `V4_DEBUG` (디버그 모드)")
+st.sidebar.markdown("**App Version:** `V5_YF_ENGINE` (IP 우회 엔진)")
 st.sidebar.markdown(f"**서버 시간 (UTC):** `{now_utc.strftime('%H:%M:%S')}`")
 st.sidebar.markdown(f"**서버 시간 (KST):** `{now_kst.strftime('%H:%M:%S')}`")
-st.sidebar.caption("※ 위 버젼(V4_DEBUG)이 안보인다면 깃허브 연동 오류입니다.")
 
 chart_days = st.sidebar.slider("📊 차트 표시 기간 (일)", min_value=1, max_value=30, value=1)
 
 # 캐싱(@st.cache_data) 완전 제거: 호출 시마다 무조건 최신 데이터를 강제 다운로드
 def fetch_and_process_data(days_to_show):
-    fetch_days = min(days_to_show + 2, 60)
-    limit = fetch_days * 96
+    fetch_days = min(days_to_show + 5, 60)
+    
+    # 지역 제한이 없는 yfinance로 원복 (Streamlit Cloud의 미국 IP 차단 우회)
+    df = yf.Ticker('BTC-USD').history(interval='15m', period=f'{fetch_days}d')
 
-    binance = ccxt.binance()
-    ohlcv = binance.fetch_ohlcv('BTC/USDT', timeframe='15m', limit=limit)
+    if df.empty:
+        raise ValueError("야후 파이낸스에서 데이터를 가져오지 못했습니다.")
 
-    if not ohlcv:
-        raise ValueError("바이낸스에서 데이터를 가져오지 못했습니다.")
+    df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
+    df.index = df.index.tz_convert('Asia/Seoul').tz_localize(None)
 
-    df = pd.DataFrame(ohlcv, columns=['Datetime', 'Open', 'High', 'Low', 'Close', 'Volume'])
-    df['Datetime'] = pd.to_datetime(df['Datetime'], unit='ms')
-    df.set_index('Datetime', inplace=True)
-
-    # 원본 UTC 타임을 KST로 변환
-    df.index = df.index.tz_localize('UTC').tz_convert('Asia/Seoul').tz_localize(None)
-    btc_df = df
+    btc_df = df.copy()
 
     btc_df['Prev_Close'] = btc_df['Close'].shift(1)
     tr1 = btc_df['High'] - btc_df['Low']
@@ -118,7 +113,7 @@ def get_live_chart(days_to_show):
                     open=recent_eval['Open'], high=recent_eval['High'],
                     low=recent_eval['Low'], close=recent_eval['Close'],
                     increasing_line_color='#00E676', decreasing_line_color='#FF3D00',
-                    name='BTC/USDT', showlegend=False)])
+                    name='BTC/USD', showlegend=False)])
 
     pred_up = recent_eval[recent_eval['Pred'] == 2]
     pred_down = recent_eval[recent_eval['Pred'] == 0]
@@ -132,8 +127,8 @@ def get_live_chart(days_to_show):
 
     time_str = recent_eval.index[-1].strftime("%Y-%m-%d %H:%M:%S")
     fig.update_layout(
-        title=dict(text=f'<b>Live Tracker</b> (Last Binance Candle: {time_str})', font=dict(size=18, color='#EAECEF')),
-        yaxis_title='USDT',
+        title=dict(text=f'<b>Live Tracker</b> (Last YF Candle: {time_str})', font=dict(size=18, color='#EAECEF')),
+        yaxis_title='USD',
         xaxis_title='',
         template='plotly_dark',
         xaxis_rangeslider_visible=False,
