@@ -1,5 +1,5 @@
 import streamlit as st
-import yfinance as yf
+import ccxt
 import pandas as pd
 import numpy as np
 import joblib
@@ -30,7 +30,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<p class="main-title">⚡ TH Chart Pro</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">Live YF Engine (No-Cache Architecture)</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">Live Kraken Engine (Real-Time Anti-Freeze)</p>', unsafe_allow_html=True)
 
 # 서버 시간 계산
 now_utc = datetime.datetime.utcnow()
@@ -38,28 +38,33 @@ now_kst = now_utc + datetime.timedelta(hours=9)
 
 st.sidebar.title("⚙️ System Status")
 st.sidebar.markdown("---")
-st.sidebar.success("🟢 **Live Engine:** Active")
+st.sidebar.success("🟢 **Live Engine:** Active (Kraken)")
 st.sidebar.info("🔄 **Auto Refresh:** 60s")
-st.sidebar.markdown("**App Version:** `V5_YF_ENGINE` (IP 우회 엔진)")
+st.sidebar.markdown("**App Version:** `V6_KRAKEN_ENGINE`")
 st.sidebar.markdown(f"**서버 시간 (UTC):** `{now_utc.strftime('%H:%M:%S')}`")
 st.sidebar.markdown(f"**서버 시간 (KST):** `{now_kst.strftime('%H:%M:%S')}`")
 
 chart_days = st.sidebar.slider("📊 차트 표시 기간 (일)", min_value=1, max_value=30, value=1)
 
-# 캐싱(@st.cache_data) 완전 제거: 호출 시마다 무조건 최신 데이터를 강제 다운로드
+# 바이낸스 차단 우회, yfinance 지연 해결을 위한 크라켄(Kraken) 거래소 사용
 def fetch_and_process_data(days_to_show):
-    fetch_days = min(days_to_show + 5, 60)
-    
-    # 지역 제한이 없는 yfinance로 원복 (Streamlit Cloud의 미국 IP 차단 우회)
-    df = yf.Ticker('BTC-USD').history(interval='15m', period=f'{fetch_days}d')
+    fetch_days = min(days_to_show + 2, 60)
+    limit = fetch_days * 96
 
-    if df.empty:
-        raise ValueError("야후 파이낸스에서 데이터를 가져오지 못했습니다.")
+    # 미국 IP 차단이 없는 Kraken 거래소 실시간 데이터 호출
+    exchange = ccxt.kraken()
+    ohlcv = exchange.fetch_ohlcv('BTC/USDT', timeframe='15m', limit=limit)
 
-    df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
-    df.index = df.index.tz_convert('Asia/Seoul').tz_localize(None)
+    if not ohlcv:
+        raise ValueError("크라켄 거래소에서 데이터를 가져오지 못했습니다.")
 
-    btc_df = df.copy()
+    df = pd.DataFrame(ohlcv, columns=['Datetime', 'Open', 'High', 'Low', 'Close', 'Volume'])
+    df['Datetime'] = pd.to_datetime(df['Datetime'], unit='ms')
+    df.set_index('Datetime', inplace=True)
+
+    # 원본 UTC 타임을 KST로 변환
+    df.index = df.index.tz_localize('UTC').tz_convert('Asia/Seoul').tz_localize(None)
+    btc_df = df
 
     btc_df['Prev_Close'] = btc_df['Close'].shift(1)
     tr1 = btc_df['High'] - btc_df['Low']
@@ -113,7 +118,7 @@ def get_live_chart(days_to_show):
                     open=recent_eval['Open'], high=recent_eval['High'],
                     low=recent_eval['Low'], close=recent_eval['Close'],
                     increasing_line_color='#00E676', decreasing_line_color='#FF3D00',
-                    name='BTC/USD', showlegend=False)])
+                    name='BTC/USDT', showlegend=False)])
 
     pred_up = recent_eval[recent_eval['Pred'] == 2]
     pred_down = recent_eval[recent_eval['Pred'] == 0]
@@ -127,8 +132,8 @@ def get_live_chart(days_to_show):
 
     time_str = recent_eval.index[-1].strftime("%Y-%m-%d %H:%M:%S")
     fig.update_layout(
-        title=dict(text=f'<b>Live Tracker</b> (Last YF Candle: {time_str})', font=dict(size=18, color='#EAECEF')),
-        yaxis_title='USD',
+        title=dict(text=f'<b>Live Tracker</b> (Last Kraken Candle: {time_str})', font=dict(size=18, color='#EAECEF')),
+        yaxis_title='USDT',
         xaxis_title='',
         template='plotly_dark',
         xaxis_rangeslider_visible=False,
